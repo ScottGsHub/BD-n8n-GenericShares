@@ -1,0 +1,210 @@
+{
+  "name": "Generic News Blog Automated Updates copy",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 5 * * 0"
+            }
+          ]
+        }
+      },
+      "id": "62bd4b65-dfae-4856-86fc-1728dad508e9",
+      "name": "Schedule Trigger (Sunday 5am UTC / Midnight ET)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        7248,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const sites = [\n  { name: 'Name',         rss: 'https://www.wherever.com/blah/feeds/rss/' },\n  { name: 'Name',    rss: 'https://www.wherever.com/blah/feeds/rss/' },\n  { name: 'Name',          rss: 'https://www.wherever.com/blah/feeds/rss/' },\n  { name: 'Name',        rss: 'https://www.wherever.com/blah/feeds/rss/' },\n  { name: 'Name',       rss: 'https://www.wherever.com/blah/feeds/rss/' },\n  { name: 'Name', rss: 'https://www.wherever.com/blah/feeds/rss/' },\n  { name: 'Name',      rss: 'https://www.wherever.com/blah/feeds/rss/' },\n  { name: 'Name',      rss: 'https://www.wherever.com/blah/feeds/rss/' },\n  { name: 'Name',         rss: 'https://www.wherever.com/blah/feeds/rss/' },\n  { name: 'Name',       rss: 'https://www.wherever.com/blah/feeds/rss/' },\n  { name: 'Name',           rss: 'https://www.wherever.com/blah/feeds/rss/' },\n  { name: 'DLNameNews',          rss: 'https://www.wherever.com/blah/feeds/rss/' },\n  { name: 'Name',        rss: 'https://www.wherever.com/blah/feeds/rss/' },\n  { name: 'Name',          rss: 'https://www.wherever.com/blah/feeds/rss/' },\n  { name: 'Name',       rss: 'https://www.wherever.com/blah/feeds/rss/' }\n];\n\nfunction parseArticles(xmlText) {\n  const itemMatches = [...xmlText.matchAll(/<item[^>]*>([\\s\\S]*?)<\\/item>/gi)];\n  if (itemMatches.length === 0) return [];\n  const articles = [];\n  for (let i = 0; i < Math.min(2, itemMatches.length); i++) {\n    const itemXml = itemMatches[i][1];\n    const titleMatch = itemXml.match(/<title>(?:<!\\[CDATA\\[)?([^\\]<]+)(?:\\]\\]>)?<\\/title>/);\n    const title = titleMatch ? titleMatch[1].trim() : 'Untitled';\n    const linkMatch =\n      itemXml.match(/<link>([^<]+)<\\/link>/) ||\n      itemXml.match(/<guid[^>]*isPermaLink=\"true\"[^>]*>([^<]+)<\\/guid>/) ||\n      itemXml.match(/<guid[^>]*>([^<]+)<\\/guid>/);\n    const link = linkMatch ? linkMatch[1].trim() : '#';\n    const descMatch = itemXml.match(/<description>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\\/description>/i);\n    let description = '';\n    if (descMatch) {\n      description = descMatch[1]\n        .replace(/<[^>]+>/g, '')\n        .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')\n        .replace(/&lt;/g, '<').replace(/&gt;/g, '>')\n        .replace(/&quot;/g, '\"').trim();\n      if (description.length > 200) description = description.substring(0, 197) + '...';\n    }\n    articles.push({ title, link, description });\n  }\n  return articles;\n}\n\nconst results = [];\n\nfor (const site of sites) {\n  const siteUrl = site.rss.split('/').slice(0, 3).join('/');\n  try {\n    const xmlText = await this.helpers.httpRequest({\n      method: 'GET',\n      url: site.rss,\n      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RSSReader/1.0)' },\n      timeout: 10000\n    });\n    if (!xmlText || xmlText.trim().length === 0) {\n      results.push({ json: { siteName: site.name, siteUrl, articles: [], skipped: true, reason: 'empty response' } });\n      continue;\n    }\n    const articles = parseArticles(xmlText);\n    results.push({ json: { siteName: site.name, siteUrl, articles, skipped: articles.length === 0 } });\n  } catch (err) {\n    results.push({ json: { siteName: site.name, siteUrl, articles: [], skipped: true, reason: err.message } });\n  }\n}\n\nreturn results;\n"
+      },
+      "id": "4ce537c8-d164-44be-b445-1811d9be71cf",
+      "name": "Fetch & Parse All RSS Feeds",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7488,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "id": "ea0f0c24-8d39-4a8d-960b-40b2de9be274",
+      "name": "Aggregate All Sites",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        7712,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const allSites = Array.isArray($input.item.json.data) ? $input.item.json.data : [];\n\nconst now = new Date();\nconst dateStr = now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });\nconst postTitle = `News Roundup – ${dateStr}`;\n\nlet html = `<div style=\"background: linear-gradient(135deg, #0f0c29, #302b63, #24243e); border-radius: 12px; padding: 40px 30px; text-align: center; margin-bottom: 40px; font-family: Arial, sans-serif;\"><h1 style=\"color: #ffffff; font-size: 2.2em; margin: 0 0 8px 0; font-weight: 800; letter-spacing: 1px;\">Web3 News Roundup</h1><p style=\"color: #a78bfa; font-size: 1.1em; margin: 0; font-weight: 500;\">${dateStr}</p><p style=\"color: #d1d5db; font-size: 0.9em; margin-top: 12px;\">Your weekly digest of the top stories.</p></div>`;\n\nfor (const site of allSites) {\n  const siteName = site.siteName || 'Unknown';\n  const siteUrl  = site.siteUrl  || '#';\n  const articles  = Array.isArray(site.articles) ? site.articles : [];\n  const skipped   = site.skipped || false;\n  if (skipped || articles.length === 0) continue;\n\n  html += `<div style=\"margin-bottom: 32px; padding: 20px; border-left: 4px solid #7c3aed; background: #f9f7ff; border-radius: 6px;\"><h2 style=\"color: #4c1d95; font-size: 1.3em; margin: 0 0 14px 0; font-family: Arial, sans-serif;\">📰 ${siteName}</h2><ul style=\"list-style: none; padding: 0; margin: 0;\">`;\n\n  for (const article of articles) {\n    html += `<li style=\"margin-bottom: 14px; padding: 12px 14px; background: #ffffff; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.06);\"><a href=\"${article.link}\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color: #1d4ed8; text-decoration: none; font-weight: 600; font-size: 0.97em; font-family: Arial, sans-serif; display: block; margin-bottom: 4px;\">${article.title}</a>${article.description ? `<p style=\"color: #4b5563; font-size: 0.88em; margin: 0; font-family: Arial, sans-serif; line-height: 1.5;\">${article.description}</p>` : ''}</li>`;\n  }\n\n  html += `</ul><div style=\"margin-top: 10px; padding-top: 10px; border-top: 1px solid #e9d5ff;\"><a href=\"${siteUrl}\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color: #7c3aed; font-size: 0.85em; font-family: Arial, sans-serif; text-decoration: none;\">See more from ${siteName} →</a></div></div>`;\n}\n\nhtml += `<div style=\"border-top: 1px solid #e5e7eb; margin-top: 40px; padding-top: 20px; text-align: center; font-family: Arial, sans-serif; color: #6b7280; font-size: 0.85em;\"><p>This roundup is automatically curated every Sunday, however may run more often on occasion of especially busy news weeks. All headlines link directly to their original sources.</p></div>`;\n\nreturn [{ json: { postTitle, postContent: html } }];\n"
+      },
+      "id": "533fb773-51e3-4090-ba90-f739b6726701",
+      "name": "Build HTML Blog Post",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7952,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_BD_SITE.com/api/v2/data_posts/create",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Api-Key",
+              "value": "your_api_key"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "post_title",
+              "value": "={{ $json.postTitle }}"
+            },
+            {
+              "name": "post_content",
+              "value": "={{ $json.postContent }}"
+            },
+            {
+              "name": "post_status",
+              "value": "1"
+            },
+            {
+              "name": "data_type",
+              "value": "20"
+            },
+            {
+              "name": "data_id",
+              "value": "14"
+            },
+            {
+              "name": "user_id",
+              "value": "5"
+            },
+            {
+              "name": "sticky_post",
+              "value": "0"
+            },
+            {
+              "name": "post_category",
+              "value": "Web3 Decentralized News"
+            },
+            {
+              "name": "post_tags",
+              "value": "Web3,Blockchain,Crypto,DeFi,Weekly Roundup"
+            },
+            {
+              "name": "post_image",
+              "value": "https://www.YOUR_SITE.com/images/site-graphics/YOUR_IMAGE.png"
+            },
+            {
+              "name": "auto_image_import",
+              "value": "1"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "bac7697e-4975-4e3d-abf5-5d129bf80261",
+      "name": "POST to Brilliant Directories API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        8176,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Automatic News Roundup for Blog News Section\n** Initially set to run at midnight ET on Sunday. (That is, beginning of the day on Sunday UTC.)\n** URLs are selected from some of the top news sites.",
+        "width": 1168
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        7216,
+        368
+      ],
+      "typeVersion": 1,
+      "id": "6cb08441-a208-4e5c-8790-44bf94d321af",
+      "name": "Sticky Note"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger (Sunday 5am UTC / Midnight ET)": {
+      "main": [
+        [
+          {
+            "node": "Fetch & Parse All RSS Feeds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch & Parse All RSS Feeds": {
+      "main": [
+        [
+          {
+            "node": "Aggregate All Sites",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate All Sites": {
+      "main": [
+        [
+          {
+            "node": "Build HTML Blog Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build HTML Blog Post": {
+      "main": [
+        [
+          {
+            "node": "POST to Brilliant Directories API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "64175597-f474-4762-8ef8-bcca089cc0a1",
+  "meta": {
+    "instanceId": "YOURS"
+  },
+  "id": "YOURS",
+  "tags": []
+}
