@@ -1,0 +1,1632 @@
+{
+  "name": "Generic - Workflow B — Categorize, Load & Publish copy",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "87db10cb-154b-46a7-86e7-3a24a2c8b28a",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -768,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "=={{ $('MANUALLY Set Import Sheet ID1').first().json.sheet_url }}",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Pending",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "status",
+              "lookupValue": "ai_complete"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "332d30e0-55d2-41bf-ad51-4042685ec825",
+      "name": "Read AI Complete Rows",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -416,
+        128
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ixtM5d8EnAfE6F1d",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "36280309-80b4-417a-9230-b49ccc43dbe5",
+      "name": "Loop Over Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -224,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const row = $input.item.json;\n\n// Clean website_canonical from website first.\n// This prevents stale/incomplete sheet values like \"yoursite.com\"\n// from overriding the real website path like \"https://1inch.com/card\".\nconst websiteCanonical = (row.website || row.website_canonical || '')\n  .toLowerCase()\n  .trim()\n  .replace(/^https?:\\/\\//, '')\n  .replace(/^www\\./, '')\n  .replace(/\\/$/, '');\n\n// Generate a random password for the BD account\nconst password = Math.random().toString(36).slice(-8) + 'A1!';\n\n// Build the clean listing object for Supabase insert\nconst listing = {\n  listing_type: row.listing_type || 'Company',\n  logo: row.logo || null,\n  cover_photo: row.cover_photo || null,\n  profile_photo: row.profile_photo || null,\n  first_name: row.first_name || null,\n  last_name: row.last_name || null,\n  email: row.email || null,\n  company: row.company || null,\n  phone_number: row.phone_number || null,\n  fax_number: row.fax_number || null,\n  address1: row.address1 || null,\n  address2: row.address2 || null,\n  city: row.city || null,\n  zip_code: row.zip_code || null,\n  state_code: row.state_code || null,\n  country_code: row.country_code || null,\n  website: row.website || null,\n  website_canonical: websiteCanonical,\n  twitter: row.twitter || null,\n  facebook: row.facebook || null,\n  linkedin: row.linkedin || null,\n  youtube: row.youtube || null,\n  instagram: row.instagram || null,\n  tiktok: row.tiktok || null,\n  discord: row.discord || null,\n  about_me: row.about_me || null,\n  about_me_staging: row.about_me_staging || row.about_me || null,\n  search_description: row.search_description || null,\n  profession_name: row.profession_name || null,\n  services: row.services || null,\n  published: true,\n  verified: false,\n  source: 'manual',\n  status: 'export_ready',\n  import_batch_id: $('Read AI Complete Rows').item.json.import_batch_id || null,\n  password\n};\n\n// Remove null and empty-string values to keep insert clean\nObject.keys(listing).forEach(k => {\n  if (listing[k] === null || listing[k] === '') delete listing[k];\n});\n\n// Always keep these fields\nlisting.published = true;\nlisting.verified = false;\nlisting.source = 'manual';\nlisting.status = 'export_ready';\nlisting.website_canonical = websiteCanonical;\nlisting.password = password;\n\nreturn [{ json: { ...listing } }];"
+      },
+      "id": "6c61d64b-c500-4ad5-a32f-66969befd2d1",
+      "name": "Prepare Listing Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -96,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const mergeNode = $('Merge Category Results to Listing Data').first().json || {};\nconst createdListing = $('Create a row').first().json || {};\nconst prepareData = $('Prepare Listing Data').first().json || {};\n\nconst listingId =\n  mergeNode.listing_id ||\n  createdListing.id ||\n  null;\n\nconst servicesRaw =\n  mergeNode.listing?.services ||\n  prepareData.services ||\n  '';\n\nif (!listingId) {\n  throw new Error(\n    'No listing_id available for category insert. Debug: ' +\n    JSON.stringify({\n      merge_listing_id: mergeNode.listing_id,\n      created_listing_id: createdListing.id,\n      website_canonical: prepareData.website_canonical\n    })\n  );\n}\n\nconst categoryRows = [];\n\nif (servicesRaw && servicesRaw.trim() !== '') {\n  const pairs = servicesRaw\n    .split(',')\n    .map(s => s.trim())\n    .filter(Boolean);\n\n  pairs.forEach((pair, index) => {\n    const parts = pair.split('=>').map(s => s.trim());\n\n    categoryRows.push({\n      listing_id: listingId,\n      sub_name: parts[0] || null,\n      subsub_name: parts[1] || null,\n      is_primary_top: index === 0\n    });\n  });\n}\n\nreturn categoryRows.map(row => ({ json: row }));"
+      },
+      "id": "5cb9a87f-7225-4786-8054-02cb56aea151",
+      "name": "Parse & Insert Categories",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2128,
+        464
+      ],
+      "notes": "Parses the services string and prepares one item per category pair for the next node to resolve UUIDs."
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "categories",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "={{ $json.subsub_name || $json.sub_name }}"
+            }
+          ]
+        }
+      },
+      "id": "cd9f855e-ea5c-46e2-9cf9-00c3bcd003b9",
+      "name": "Resolve Sub-Category UUIDs",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2320,
+        464
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "60E01w7Ur7CZ7PH8",
+          "name": "Supabase DeCenDir - GPT Enrichment"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "Looks up the UUID for each sub/subsub category name. Uses subsub_name if available, otherwise sub_name."
+    },
+    {
+      "parameters": {
+        "tableId": "listing_categories",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "listing_id",
+              "fieldValue": "={{ $('Parse & Insert Categories').first().json.listing_id }}"
+            },
+            {
+              "fieldId": "category_id",
+              "fieldValue": "={{ $json.id }}"
+            },
+            {
+              "fieldId": "is_primary_top",
+              "fieldValue": "={{ $('Parse & Insert Categories').first().json.is_primary_top }}"
+            }
+          ]
+        }
+      },
+      "id": "0a2cf5c5-dffd-4fd4-a808-bdab5c4e27c1",
+      "name": "Insert Listing Categories",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2512,
+        464
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "60E01w7Ur7CZ7PH8",
+          "name": "Supabase DeCenDir - GPT Enrichment"
+        }
+      },
+      "continueOnFail": true,
+      "onError": "continueRegularOutput",
+      "notes": "Inserts one row per category pair into listing_categories. continueOnFail=true so an unresolved category name doesn't stop the whole workflow."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR-SITE.com/api/v2/user/create",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Api-Key",
+              "value": "YOUR-API-KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/x-www-form-urlencoded"
+            },
+            {
+              "name": "accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "email",
+              "value": "={{ $json.listing.email }}"
+            },
+            {
+              "name": "password",
+              "value": "={{ $json.password }}"
+            },
+            {
+              "name": "subscription_id",
+              "value": "7"
+            },
+            {
+              "name": "subscription_name",
+              "value": "Claim Listing"
+            },
+            {
+              "name": "listing_type",
+              "value": "={{ $json.listing.listing_type || 'Company' }}"
+            },
+            {
+              "name": "company",
+              "value": "={{ $json.listing.company }}"
+            },
+            {
+              "name": "website",
+              "value": "={{ $json.listing.website }}"
+            },
+            {
+              "name": "logo",
+              "value": "={{ $json.listing.logo }}"
+            },
+            {
+              "name": "about_me",
+              "value": "={{ $json.listing.about_me }}"
+            },
+            {
+              "name": "search_description",
+              "value": "={{ $json.listing.search_description }}"
+            },
+            {
+              "name": "profession_name",
+              "value": "={{ $json.listing.profession_name }}"
+            },
+            {
+              "name": "services",
+              "value": "={{ $json.listing.services }}"
+            },
+            {
+              "name": "phone_number",
+              "value": "={{ $json.listing.phone_number }}"
+            },
+            {
+              "name": "address1",
+              "value": "={{ $json.listing.address1 }}"
+            },
+            {
+              "name": "city",
+              "value": "={{ $json.listing.city }}"
+            },
+            {
+              "name": "state_code",
+              "value": "={{ $json.listing.state_code }}"
+            },
+            {
+              "name": "country_code",
+              "value": "={{ $json.listing.country_code }}"
+            },
+            {
+              "name": "zip_code",
+              "value": "={{ $json.listing.zip_code }}"
+            },
+            {
+              "name": "twitter",
+              "value": "={{ $json.listing.twitter }}"
+            },
+            {
+              "name": "linkedin",
+              "value": "={{ $json.listing.linkedin }}"
+            },
+            {
+              "name": "facebook",
+              "value": "={{ $json.listing.facebook }}"
+            },
+            {
+              "name": "instagram",
+              "value": "={{ $json.listing.instagram }}"
+            },
+            {
+              "name": "youtube",
+              "value": "={{ $json.listing.youtube }}"
+            },
+            {
+              "name": "tiktok",
+              "value": "={{ $json.listing.tiktok }}"
+            },
+            {
+              "name": "discord",
+              "value": "={{ $json.listing.discord }}"
+            },
+            {
+              "name": "published",
+              "value": "1"
+            },
+            {
+              "name": "verified",
+              "value": "0"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "566fa506-2e67-4bf9-98d8-d29378f984cd",
+      "name": "Publish to BD API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1392,
+        272
+      ],
+      "onError": "continueRegularOutput",
+      "notes": "Publishes the listing to Brilliant Directories via the BD API. Stops workflow on failure."
+    },
+    {
+      "parameters": {
+        "jsCode": "const bdResponse = $input.item.json;\nconst prev = $('Merge Category Results to Listing Data').item.json;\n\nif (prev.skipped || bdResponse.skipped) {\n  return [{ json: { skipped: true, reason: prev.reason || 'upstream skipped' } }];\n}\n\nconst bdMemberId = bdResponse?.message?.user_id \n  || bdResponse?.message?.member_id \n  || bdResponse?.message?.id \n  || bdResponse?.id \n  || null;\n\nreturn [{ json: {\n  listing_id: String(prev.listing_id || ''),\n  bd_member_id: bdMemberId ? String(bdMemberId) : null,\n  row_number: Number(prev.row_number) || 0,\n  website: String(prev.website || ''),\n  website_canonical: String(prev.website_canonical || ''),\n  bd_response: JSON.stringify(bdResponse).slice(0, 500)\n} }];"
+      },
+      "id": "5e66a6b8-d841-4cc1-aa72-5920f5d5dbae",
+      "name": "Store BD Member ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1584,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "listings",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Store BD Member ID').first().json.bd_member_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "bd_member_id",
+              "fieldValue": "={{ $('Store BD Member ID').first().json.bd_member_id }}"
+            }
+          ]
+        }
+      },
+      "id": "4128b0fe-e0be-4a96-8839-67b8c66583e2",
+      "name": "Update Supabase with BD Member ID",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1952,
+        464
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "60E01w7Ur7CZ7PH8",
+          "name": "Supabase DeCenDir - GPT Enrichment"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "amount": 4
+      },
+      "id": "1bba99ac-29f2-4d69-afff-0bacd410b53a",
+      "name": "Rate Limit Wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2688,
+        464
+      ],
+      "webhookId": "4d5f6855-e169-49e1-9b16-c702dfb12733"
+    },
+    {
+      "parameters": {},
+      "id": "67910d8c-2ceb-4729-8e83-975bebb2a6d6",
+      "name": "Back to Loop",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2800,
+        736
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconst publishedCount = items.filter(i => !i.json.skipped).length;\nconst skippedCount = items.filter(i => i.json.skipped).length;\nconst skippedReasons = items\n  .filter(i => i.json.skipped && i.json.reason)\n  .map(i => i.json.reason);\n\nreturn [{ json: {\n  publishedCount,\n  skippedCount,\n  skippedReasons: skippedReasons.join(' | '),\n  completedAt: new Date().toISOString()\n}}];"
+      },
+      "id": "b25a5015-f335-498f-b72b-8c2f124e4350",
+      "name": "Count Published",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "import_batches",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "source_file",
+              "keyValue": "={{ $('Read AI Complete Rows').first().json.import_batch_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "inserted_rows",
+              "fieldValue": "={{ $json.publishedCount }}"
+            }
+          ]
+        }
+      },
+      "id": "0630f5bd-4ba4-4bc2-8bd8-ca8c508cf2e6",
+      "name": "Update Import Batch Counts",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        176,
+        -32
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "60E01w7Ur7CZ7PH8",
+          "name": "Supabase DeCenDir - GPT Enrichment"
+        }
+      },
+      "continueOnFail": true,
+      "notes": "Updates the import_batches record with how many listings were published. continueOnFail=true so a missing batch ID doesn't block the completion email."
+    },
+    {
+      "parameters": {
+        "sendTo": "YOUR-EMAIL@gmail.com",
+        "subject": "=Workflow B Complete — {{ $('Count Published').item.json.publishedCount }} listings published",
+        "message": "=<p>Workflow B finished at {{ $json.completedAt }}.</p>\n<ul>\n  <li>✅ Successfully published: <strong>{{ $json.publishedCount }}</strong></li>\n  <li>⏭️ Skipped: <strong>{{ $json.skippedCount }}</strong></li>\n</ul>\n{{ $json.skippedReasons ? '<p><strong>Skip reasons:</strong> ' + $json.skippedReasons + '</p>' : '' }}\n<p>Log in to the directory admin panel to review published listings.</p>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "ef7f1163-e9e2-4da5-8e06-a0a7fb509447",
+      "name": "Send Completion Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        368,
+        -32
+      ],
+      "webhookId": "7690d6f6-5787-450f-a13f-ce2f8ed350a3",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "tiRFpouGJ8yBsmRv",
+          "name": "Gmail account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "listings",
+        "dataToSend": "autoMapInputData"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        592,
+        80
+      ],
+      "id": "f61d417c-da67-4a2d-ada9-441f0bd61fcf",
+      "name": "Create a row",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "60E01w7Ur7CZ7PH8",
+          "name": "Supabase DeCenDir - GPT Enrichment"
+        }
+      },
+      "disabled": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://YOUR-SUPASE-DB.supabase.co/rest/v1/categories?name=eq.{{ encodeURIComponent($('Prepare Listing Data').item.json.profession_name) }}&level=eq.1&select=id,name,level&limit=1",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR-API-KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR-API-KEY"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        992,
+        272
+      ],
+      "id": "3bbb73b9-c984-407c-ab02-b2f1798b69b1",
+      "name": "Resolve Top Category UUID1",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "60E01w7Ur7CZ7PH8",
+          "name": "Supabase DeCenDir - GPT Enrichment"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst prepareData = $('Prepare Listing Data').first().json;\nconst createdListing = $('Create a row').first().json;\n\nconst listingId = createdListing?.id || null;\n\nif (!listingId) {\n   return [{\n    json: {\n      skipped: true,\n      reason: 'no_listing_id',\n      debug_get_created_listing: createdListing,\n      debug_website_canonical: prepareData.website_canonical\n    }\n  }];\n}\n\nconst categoryResult = items[0]?.json;\nconst topCategoryId = categoryResult?.id || null;\n\nif (!topCategoryId) {\n  return [{\n    json: {\n      skipped: true,\n      reason: 'Top category not found',\n      debug_category_result: categoryResult,\n      debug_profession_name: prepareData.profession_name\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    listing_id: String(listingId),\n    password: String(prepareData.password || ''),\n    row_number: Number($('Loop Over Items').first().json.row_number) || 0,\n    website: String(prepareData.website || ''),\n    website_canonical: String(prepareData.website_canonical || ''),\n    top_category_id: String(topCategoryId),\n    listing: {\n      email: String(prepareData.email || ''),\n      company: String(prepareData.company || ''),\n      listing_type: String(prepareData.listing_type || 'Company'),\n      logo: String(prepareData.logo || ''),\n      website: String(prepareData.website || ''),\n      twitter: String(prepareData.twitter || ''),\n      facebook: String(prepareData.facebook || ''),\n      linkedin: String(prepareData.linkedin || ''),\n      youtube: String(prepareData.youtube || ''),\n      instagram: String(prepareData.instagram || ''),\n      tiktok: String(prepareData.tiktok || ''),\n      discord: String(prepareData.discord || ''),\n      city: String(prepareData.city || ''),\n      state_code: String(prepareData.state_code || ''),\n      country_code: String(prepareData.country_code || ''),\n      profession_name: String(prepareData.profession_name || ''),\n      services: String(prepareData.services || ''),\n      search_description: String(prepareData.search_description || ''),\n      about_me: String(prepareData.about_me || ''),\n      password: String(prepareData.password || '')\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        272
+      ],
+      "id": "513b953b-a8da-4ba8-9114-00d0c6e004e2",
+      "name": "Merge Category Results to Listing Data"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $input.item.json;\nreturn { json: {\n  ...prev,\n  website_canonical: prev.website_canonical\n}};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        32,
+        512
+      ],
+      "id": "dde55104-84b5-4850-85ce-b032ce8d294e",
+      "name": "Code temp"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "listings",
+        "limit": 1,
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "website_canonical",
+              "condition": "eq",
+              "keyValue": "=={{ $json.website_canonical }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        176,
+        512
+      ],
+      "id": "348bf2f2-7683-444d-bce1-b230d73418bd",
+      "name": "Check Dupes",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "60E01w7Ur7CZ7PH8",
+          "name": "Supabase DeCenDir - GPT Enrichment"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: {\n  sheet_url: 'https://docs.google.com/spreadsheets/d/PAGE-ID-HERE/edit/edit'\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -608,
+        128
+      ],
+      "id": "d9729ffe-9656-4d5d-8087-9088e82768db",
+      "name": "MANUALLY Set Import Sheet ID1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "b316316b-c2f9-438b-9dba-320375030c73",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        320,
+        512
+      ],
+      "id": "ae59c398-111e-45c0-b6dc-6a394a20a71e",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $('MANUALLY Set Import Sheet ID1').first().json.sheet_url }}",
+          "__regex": "https:\\/\\/(?:drive|docs)\\.google\\.com(?:\\/.*|)\\/d\\/([0-9a-zA-Z\\-_]+)(?:\\/.*|)"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1562899449,
+          "mode": "list",
+          "cachedResultName": "Pending",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/your-file/edit#gid=01234"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "=published",
+            "bd_member_id": "={{ $('Store BD Member ID').item.json.bd_member_id }}",
+            "website_canonical": "={{ $('Store BD Member ID').item.json.website_canonical }}"
+          },
+          "matchingColumns": [
+            "website_canonical"
+          ],
+          "schema": [
+            {
+              "id": "listing_type",
+              "displayName": "listing_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "cover_photo",
+              "displayName": "cover_photo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "logo",
+              "displayName": "logo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "website",
+              "displayName": "website",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "website_canonical",
+              "displayName": "website_canonical",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "profile_photo",
+              "displayName": "profile_photo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "profession_name",
+              "displayName": "profession_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "services",
+              "displayName": "services",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "about_me",
+              "displayName": "about_me",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "search_description",
+              "displayName": "search_description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "first_name",
+              "displayName": "first_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "last_name",
+              "displayName": "last_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "phone_number",
+              "displayName": "phone_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "fax_number",
+              "displayName": "fax_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "address1",
+              "displayName": "address1",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "address2",
+              "displayName": "address2",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "city",
+              "displayName": "city",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "zip_code",
+              "displayName": "zip_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "state_code",
+              "displayName": "state_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "country_code",
+              "displayName": "country_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "twitter",
+              "displayName": "twitter",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "facebook",
+              "displayName": "facebook",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "linkedin",
+              "displayName": "linkedin",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "youtube",
+              "displayName": "youtube",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "instagram",
+              "displayName": "instagram",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "pinterest",
+              "displayName": "pinterest",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "snapchat",
+              "displayName": "snapchat",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "tiktok",
+              "displayName": "tiktok",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "whatsapp",
+              "displayName": "whatsapp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "published",
+              "displayName": "published",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "education",
+              "displayName": "education",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "software",
+              "displayName": "software",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "password",
+              "displayName": "password",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "position",
+              "displayName": "position",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "google_plus",
+              "displayName": "google_plus",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "parent_id",
+              "displayName": "parent_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "lat",
+              "displayName": "lat",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "lon",
+              "displayName": "lon",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "verified",
+              "displayName": "verified",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "discord",
+              "displayName": "discord",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "about_me_staging",
+              "displayName": "about_me_staging",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "country_name",
+              "displayName": "country_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "blog",
+              "displayName": "blog",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "quote",
+              "displayName": "quote",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "experience",
+              "displayName": "experience",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "affiliation",
+              "displayName": "affiliation",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "awards",
+              "displayName": "awards",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "notes",
+              "displayName": "notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "import_batch_id",
+              "displayName": "import_batch_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "website_norm",
+              "displayName": "website_norm",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "bd_member_id",
+              "displayName": "bd_member_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1792,
+        272
+      ],
+      "id": "be83e53d-3465-40b3-bb4a-3e4fe2bf5297",
+      "name": "Write Back to Sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ixtM5d8EnAfE6F1d",
+          "name": "Google Sheets account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: $('Prepare Listing Data').item.json }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        256
+      ],
+      "id": "b9918ef3-e2a8-4e02-abde-272bd0763254",
+      "name": "Restore Listing Data"
+    },
+    {
+      "parameters": {
+        "content": "## Begin Updates of Supabase and Brilliant Directories\n** This will read from spreadsheet which should have all info to go to BD, including logo image thumbnail URLs for import, which was a manual step and reason for two different workflows.\n** Final outcome of this workflow should be all uploaded to BD, at which point, the listing image fetch and re-size function may be run, completing the update.                         ",
+        "width": 672
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -784,
+        -112
+      ],
+      "typeVersion": 1,
+      "id": "25ffa6a4-6a03-4933-b0b9-e447dc894799",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const prev = $input.item.json;\nif (prev.error) {\n  return [{ json: { skipped: true, reason: 'duplicate_blocked' } }];\n}\nconst listingId = prev.id || null;\nif (!listingId) {\n  return [{ json: { skipped: true, reason: 'no_listing_id' } }];\n}\nreturn [{ json: {\n  listing_id: String(listingId),\n  row_number: Number($('Loop Over Items').item.json.row_number) || 0\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        944,
+        1056
+      ],
+      "id": "c7b43d18-7e6b-4881-a391-dd46441e7d1e",
+      "name": "Store Listing ID"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "listings",
+        "limit": 1,
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "website_canonical",
+              "condition": "eq",
+              "keyValue": "=={{ $('Prepare Listing Data').first().json.website_canonical }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1136,
+        1056
+      ],
+      "id": "2e67cfac-4474-4efa-9e67-48c6b2f777d9",
+      "name": "Get Created Listing",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "60E01w7Ur7CZ7PH8",
+          "name": "Supabase DeCenDir - GPT Enrichment"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "MANUALLY Set Import Sheet ID1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read AI Complete Rows": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Count Published",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Listing Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Listing Data": {
+      "main": [
+        [
+          {
+            "node": "Code temp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Insert Categories": {
+      "main": [
+        [
+          {
+            "node": "Resolve Sub-Category UUIDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Sub-Category UUIDs": {
+      "main": [
+        [
+          {
+            "node": "Insert Listing Categories",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Listing Categories": {
+      "main": [
+        [
+          {
+            "node": "Rate Limit Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish to BD API": {
+      "main": [
+        [
+          {
+            "node": "Store BD Member ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store BD Member ID": {
+      "main": [
+        [
+          {
+            "node": "Write Back to Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Supabase with BD Member ID": {
+      "main": [
+        [
+          {
+            "node": "Parse & Insert Categories",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rate Limit Wait": {
+      "main": [
+        [
+          {
+            "node": "Back to Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Back to Loop": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Published": {
+      "main": [
+        [
+          {
+            "node": "Update Import Batch Counts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Import Batch Counts": {
+      "main": [
+        [
+          {
+            "node": "Send Completion Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a row": {
+      "main": [
+        [
+          {
+            "node": "Resolve Top Category UUID1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Resolve Top Category UUID1": {
+      "main": [
+        [
+          {
+            "node": "Merge Category Results to Listing Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Category Results to Listing Data": {
+      "main": [
+        [
+          {
+            "node": "Publish to BD API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code temp": {
+      "main": [
+        [
+          {
+            "node": "Check Dupes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Dupes": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MANUALLY Set Import Sheet ID1": {
+      "main": [
+        [
+          {
+            "node": "Read AI Complete Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Restore Listing Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Back to Sheet": {
+      "main": [
+        [
+          {
+            "node": "Update Supabase with BD Member ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Listing Data": {
+      "main": [
+        [
+          {
+            "node": "Create a row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Listing ID": {
+      "main": [
+        []
+      ]
+    },
+    "Get Created Listing": {
+      "main": [
+        []
+      ]
+    }
+  },
+ 
+}
